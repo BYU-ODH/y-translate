@@ -1,0 +1,8 @@
+.idea
+__pycache__
+*.dsl.dz
+notes.txt
+venv
+config.py
+testFile*.txt
+NewDictionaries
