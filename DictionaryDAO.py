@@ -29,7 +29,9 @@ def _readFromTranslationsTable(key: str) -> dict:
 
         cur = conn.cursor()
 
-        cur.execute(f"SELECT meaning FROM meanings WHERE headword='{key}';")
+        execString = """SELECT meaning FROM meanings WHERE headword=%s;"""
+
+        cur.execute(execString, (key,))
 
         res = cur.fetchall()
 
@@ -50,35 +52,32 @@ def _readFromTranslationsTable(key: str) -> dict:
 #     client[config['db_name']].translations.update_one({'_id': key}, {'$set': {'meanings': value}})
 #
 #
-def _writeToTranslationsTable(key: str, value: str, conn=None, commitConn=True,
-                              closeConn=True, cur=None, closeCur=True,
-                              insertHeadword=True):
+def _writeToTranslationsTable(key: str, value: str):
+    conn = None
+    cur = None
     try:
-        if cur is None:
-            conn = _getConn()
+        conn = _getConn()
 
-        if cur is None:
-            cur = conn.cursor()
+        cur = conn.cursor()
 
-        if insertHeadword:
-            cur.execute(f"INSERT INTO headwords VALUES ('{key}') ON CONFLICT DO NOTHING;")
+        execString = """INSERT INTO headwords VALUES (%s) ON CONFLICT DO NOTHING;"""
+        cur.execute(execString, (key,))
 
-        cur.execute(f"INSERT INTO meanings(meaning, headword) VALUES ('{value}', '{key}');")
+        execString = """INSERT INTO meanings(meaning, headword) VALUES (%s, %s);"""
+        cur.execute(execString, (value, key))
 
-        if closeCur:
-            cur.close()
+        cur.close()
 
-        if commitConn:
-            conn.commit()
+        conn.commit()
 
         return True
 
     except:
         return False
     finally:
-        if cur is not None and closeCur:
+        if cur is not None:
             cur.close()
-        if conn is not None and closeConn:
+        if conn is not None:
             conn.close()
 
 def appendMeaning(lemma: str, language_code: SupportedLanguage, meaning: DictionaryMeaning):
