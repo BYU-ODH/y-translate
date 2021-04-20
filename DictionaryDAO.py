@@ -1,56 +1,111 @@
-from bson import ObjectId
-
 from Utils import generateKey
 from config import config
 from domain.DictionaryEntry import DictionaryEntry
 from domain.DictionaryMeaning import DictionaryMeaning
 from domain.SupportedLanguage import SupportedLanguage
 import json
-from pymongo import MongoClient
+# from pymongo import MongoClient
+import psycopg2
+
+def _getConn():
+    conn = None
+    try:
+        conn = psycopg2.connect(host=config['host'],
+                                database=config['database'],
+                                user=config['user'],
+                                password=config['password'],)
+        return conn
+    except:
+        if conn is not None:
+            conn.close()
+        return None
 
 
-def _readFromDatabase(key: str, client: MongoClient) -> dict:
-    return client[config['db_name']].translations.find_one({'_id': key})
+def _readFromTranslationsTable(key: str) -> dict:
+    conn = None
+    cur = None
+    try:
+        conn = _getConn()
+
+        cur = conn.cursor()
+
+        cur.execute(f"SELECT meaning FROM meanings WHERE headword='{key}';")
+
+        res = cur.fetchall()
+
+        cur.close()
+
+        return res
+
+    except:
+        return {}
+    finally:
+        if cur is not None:
+            cur.close()
+        if conn is not None:
+            conn.close()
 
 
-def _overwriteToDatabase(key: str, value: str, client: MongoClient):
-    client[config['db_name']].translations.update_one({'_id': key}, {'$set': {'meanings': value}})
+# def _overwriteToDatabase(key: str, value: str, client: MongoClient):
+#     client[config['db_name']].translations.update_one({'_id': key}, {'$set': {'meanings': value}})
+#
+#
+def _writeToTranslationsTable(key: str, value: str, conn=None, commitConn=True,
+                              closeConn=True, cur=None, closeCur=True,
+                              insertHeadword=True):
+    try:
+        if cur is None:
+            conn = _getConn()
 
+        if cur is None:
+            cur = conn.cursor()
 
-def _writeToDatabase(key: str, value: str, client: MongoClient):
-    client[config['db_name']].translations.insert_one({'_id': key, 'meanings': value})
+        if insertHeadword:
+            cur.execute(f"INSERT INTO headwords VALUES ('{key}') ON CONFLICT DO NOTHING;")
 
+        cur.execute(f"INSERT INTO meanings(meaning, headword) VALUES ('{value}', '{key}');")
+
+        if closeCur:
+            cur.close()
+
+        if commitConn:
+            conn.commit()
+
+        return True
+
+    except:
+        return False
+    finally:
+        if cur is not None and closeCur:
+            cur.close()
+        if conn is not None and closeConn:
+            conn.close()
 
 def appendMeaning(lemma: str, language_code: SupportedLanguage, meaning: DictionaryMeaning):
-    client = MongoClient()
-    dbRes = _readFromDatabase(generateKey(lemma, language_code), client)
-    curEntry = []
-    if dbRes is not None:
-        for ea in json.loads(dbRes['meanings']):
-            curEntry.append(
-                DictionaryMeaning(ea['lemma'], ea['pos'], ea['meaning']))
-    curEntry.append(meaning)
-    curEntry = [ea.__dict__ for ea in curEntry]
-    if dbRes is None:
-        _writeToDatabase(generateKey(lemma, language_code), json.dumps(curEntry), client)
-    else:
-        _overwriteToDatabase(generateKey(lemma, language_code), json.dumps(curEntry), client)
+    """
+    Appends meaning to lemma and language code combination in translations table. If lemma-code does
+    exist, it create them first.
+    """
+    _writeToTranslationsTable(generateKey(lemma, language_code), json.dumps(meaning.__dict__))
 
 
 def getDictionaryEntry(lemma: str, language_code: SupportedLanguage) -> DictionaryEntry:
     # with open(f'JsonDictionaries/{language_code}-en-dictionary.json') as f:
     #     dictionary = json.load(f)
-    client = MongoClient()
     res = DictionaryEntry(lemma, [])
-    dbRes = _readFromDatabase(generateKey(lemma, language_code), client)
+    dbRes = _readFromTranslationsTable(generateKey(lemma, language_code))
     if dbRes is None:
         return None
-    for ea in json.loads(dbRes['meanings']):
-        res.meanings.append(DictionaryMeaning(ea['lemma'], ea['pos'], ea['meaning']))
+    print(dbRes)
+    for ea in dbRes:
+        j = json.loads(ea[0])
+        res.meanings.append(DictionaryMeaning(j['lemma'], j['pos'], j['meaning']))
     return res
 
 # print(getDictionaryEntry('élder', SupportedLanguage.es))
+# print(getDictionaryEntry('elder', SupportedLanguage.es))
 # appendMeaning('élder', SupportedLanguage.es, DictionaryMeaning('élder', '{n}', '(a representative of the Church of Jesus Christ of Latter-day Saints)'))
+# appendMeaning('élder', SupportedLanguage.es, DictionaryMeaning('élder', '{n}', '(an older person)'))
 # print(getDictionaryEntry('élder', SupportedLanguage.es))
 
 # from pprint import pprint
